@@ -468,6 +468,7 @@ class Generate(Operation):
         self.logger.info(
             "Generate operation %d created %d new thoughts", self.id, len(self.thoughts)
         )
+        
 
 
 class Improve(Operation):
