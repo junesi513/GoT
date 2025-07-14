@@ -1,0 +1,37 @@
+f
+--- ObjectArrayCodec.java	2021-09-07 20:30:52.000000000 +0100
++++ ObjectArrayCodec.java	2021-09-07 20:33:52.000000000 +0100
+@@ -1,18 +1,24 @@
++import com.alibaba.fastjson.parser.ParserConfig;
++import java.util.Set;
++
+ public class ObjectArrayCodec implements ObjectSerializer, ObjectDeserializer {
+     @SuppressWarnings({ "unchecked", "rawtypes" })
+     public <T> T deserialze(DefaultJSONParser parser, Type type, Object fieldName) {
++       
++        // Added allowlist for allowed classes
++        Set<String> allowedClasses = ParserConfig.getGlobalInstance().getAcceptList();
++
+         Class componentClass;
+ 
+         Type componentType;
+         if (type instanceof GenericArrayType) {
+             //... existing code ...
+             } else {
+                 componentClass = TypeUtils.getClass(componentType);
++                // Check against allowlist
++                if (!allowedClasses.contains(componentClass.getName())) {
++                    throw new IllegalAccessException("Class '" + componentClass.getName() + "' is not allowed for deserialization");
++                }
+             }
+         } else {
+             //... existing code ...
+             componentType = componentClass = clazz.getComponentType();
++            // Check against allowlist
++            if (!allowedClasses.contains(componentClass.getName())) {
++                throw new IllegalAccessException("Class '" + componentClass.getName() + "' is not allowed for deserialization");
++            }
+         }
+         JSONArray array = new JSONArray();
+         parser.parseArray(componentClass, array, fieldName);
+```

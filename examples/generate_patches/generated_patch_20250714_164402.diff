@@ -1,0 +1,47 @@
+f
+--- ObjectArrayCodec.java
++++ ObjectArrayCodec.java
+@@ -1,29 +1,39 @@
+ // @author wenshao[szujobs@hotmail.com]
+ public class ObjectArrayCodec implements ObjectSerializer, ObjectDeserializer {
++    private static List<Class> whiteListClasses = Arrays.asList(
++        // add classes you want to allow deserializing
++        // e.g., 
++        // Integer.class,
++        // String.class,
++        // CustomClass.class
++    );
+
+     @SuppressWarnings({ "unchecked", "rawtypes" })
+     public <T> T deserialze(DefaultJSONParser parser, Type type, Object fieldName) {
+     
+         Class componentClass;
+         
+         Type componentType;
+         if (type instanceof GenericArrayType) {
+             // some code...
+         } else {
++            // secure deserializer, deserialization restricted only to whitelisted classes  
++            if (!whiteListClasses.contains(type)) {
++                throw new SecurityException("Deserialization of this class is not allowed for security reasons");
++            }
+             Class clazz = (Class) type;
+             componentType = componentClass = clazz.getComponentType();
+         }
+
+      JSONArray array = new JSONArray();
+      
+-     parser.parseArray(componentClass, array, fieldName);
++     // validate and sanitize input before deserialization
++     if (whiteListClasses.contains(componentClass)) {
++         parser.parseArray(componentClass, array, fieldName);
++     } else {
++         throw new SecurityException("Deserialization of this class is not allowed for security reasons");
++     }
+ 
+-     return (T) toObjectArray(parser, componentClass, array);
++     // only return the object after successful deserialization
++     return (T) isDeserializationSuccessful ? toObjectArray(parser, componentClass, array) : null;
+     }
+ } 
+```

@@ -1,0 +1,32 @@
+f
+--- Old/ObjectArrayCodec.java
++++ New/ObjectArrayCodec.java
+@@ -1,24 +1,31 @@
+ // @author wenshao[szujobs@hotmail.com]
+ public class ObjectArrayCodec implements ObjectSerializer, ObjectDeserializer {
+     @SuppressWarnings({ "unchecked", "rawtypes" })
+     public <T> T deserialze(DefaultJSONParser parser, Type type, Object fieldName) {
+         //Define deserializer
++        //Use a secure deserializer or define your own
++        SecureDeserializer secureDeserializer = new SecureDeserializer();
++       
+         Class componentClass;
+         
+         Type componentType;
+         if (type instanceof GenericArrayType) {
+             GenericArrayType clazz = (GenericArrayType) type;
+             componentType = clazz.getGenericComponentType();
+ @@ -25,7 +31,10 @@
+ 
+         JSONArray array = new JSONArray();
+         
+-        parser.parseArray(componentClass, array, fieldName);
++        // Deserialize using secure deserializer
++        if(secureDeserializer.isSafeToDeserialize(componentClass)) {
++            parser.parseArray(componentClass, array, fieldName);
++        }
+ 
+         return (T) toObjectArray(parser, componentClass, array);
+     }
+ } 
+```
