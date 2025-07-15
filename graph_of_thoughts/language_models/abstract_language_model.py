@@ -19,7 +19,7 @@ class AbstractLanguageModel(ABC):
     """
 
     def __init__(
-        self, config_path: str = "", model_name: str = "", cache: bool = False
+        self, config_path: str = "", model_name: str = "", cache: bool = False, logger: logging.Logger = None
     ) -> None:
         """
         Initialize the AbstractLanguageModel instance with configuration, model details, and caching options.
@@ -30,8 +30,11 @@ class AbstractLanguageModel(ABC):
         :type model_name: str
         :param cache: Flag to determine whether to cache responses. Defaults to False.
         :type cache: bool
+        :param logger: Optional logger instance for LLM communication.
+        :type logger: logging.Logger
         """
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.llm_logger = logger # 로거를 인스턴스 변수로 저장
         self.config: Dict = None
         self.model_name: str = model_name
         self.cache = cache

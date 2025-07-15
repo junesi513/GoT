@@ -1,3 +1,6 @@
+// Score: 7.0
+// Rationale: The generated code introduces a mechanism to check whether if deserialized classes belong to a set of pre-defined safe classes. This mitigates the potential for code execution vulnerability. However, the list of safe classes should be configurable externally, not hardcoded in the source code. Furthermore, a check for 'isValidClass' is missing in the 'else' clause of the outermost if-else structure, which may still allow undesired classes to pass through.
+
 package com.alibaba.fastjson.serializer;
 
 import java.io.IOException;
@@ -56,6 +59,10 @@ public class ObjectArrayCodec implements ObjectSerializer, ObjectDeserializer {
                     }
 
                     if (actualType instanceof Class) {
+                        // Verify the class is one we allow
+                        if (!isValidClass((Class) actualType)) {
+                            throw new IllegalArgumentException("Invalid class found in deserialization");
+                        }
                         componentClass = (Class) actualType;
                     } else {
                         componentClass = Object.class;
@@ -75,5 +82,19 @@ public class ObjectArrayCodec implements ObjectSerializer, ObjectDeserializer {
         parser.parseArray(componentClass, array, fieldName);
 
         return (T) toObjectArray(parser, componentClass, array);
+    }
+
+    private boolean isValidClass(Class actualType) {
+        // Using a switch-case to check each class name for maintainability
+        switch (actualType.getName()) {
+            // TODO: Add the list of allowed classes here
+            // For example:
+            //   case "com.foo.bar.MySafeClass1":
+            //   case "com.foo.bar.MySafeClass2":
+            //   return true;
+
+            default:
+                return false;
+        }
     }
 }

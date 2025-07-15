@@ -68,11 +68,13 @@ Output ONLY the new code content within <PatchedCode> and </PatchedCode> tags.
 """
 
     # --- aggregate_patches_prompt 수정 시작 ---
+    # ToT에서는 최종 Aggregation이 일반적이지 않으므로, 이 프롬프트는 ToT 기반 그래프에서는 사용되지 않을 수 있습니다.
+    # 하지만 GoT 프레임워크의 Aggregate Operation을 사용한다면 필요합니다.
+    # 여기서는 ToT의 '최종 선택'에 초점을 맞추므로, 이 프롬프트는 사용되지 않습니다.
     aggregate_patches_prompt = """<Instruction>
 You are a master software architect and security expert.
 You have been provided with several previously generated candidate solutions, all of which are compilable.
 Your task is to analyze each solution, considering not only its assigned score but also its detailed rationale and content, to synthesize a single, optimal and superior final version of the code. This final version must incorporate the best ideas and insights from all candidates.
-Here are the criteria for evaluating the code:
 Refer to relevant patches, but you don't need to if you deem them unnecessary.
 
 Here are the criteria for evaluating the code:
@@ -359,46 +361,61 @@ class ValidateAndImproveOperation(Operation):
 
 # --- ValidateAndImproveOperation 클래스 수정 끝 ---
 
-
-def advanced_patch_graph_with_aggregation(patch_prompter, patch_parser, vulnerable_file_name) -> GraphOfOperations:
+# --- ToT 기반 GraphOfOperations 정의 함수 ---
+def tot_patch_graph(patch_prompter, patch_parser, vulnerable_file_name) -> GraphOfOperations:
     """
-    패치 생성, 점수 매기기, 집계를 위한 작업 그래프를 정의하여
-    GoT의 정제 기능을 더 잘 반영합니다.
+    Defines a Tree of Thoughts (ToT)-like graph for patch generation.
+    This simulates a multi-stage refinement/expansion process.
     """
-    # 1단계: 여러 후보 패치 생성
-    op1_generate = Generate(num_branches_prompt=5) # 예시: 초기 5개의 후보 패치 생성
-
-    # 2단계: 생성된 각 패치 유효성 검사 및 개선 (Refining 구현)
-    #         컴파일에 실패하면, LLM이 이를 수정하려고 시도합니다.
-    op2_refine = ValidateAndImproveOperation(patch_prompter, vulnerable_file_name, num_tries=2) # 2번의 개선 시도
-
-    # 3단계: 유효하고 개선된 각 후보에 대해 개별적으로 점수 매기기
-    op3_score = Score(combined_scoring=False)
-
-    # 4단계: 집계를 위해 상위 N개의 최적 후보(예: 3개) 유지
-    op4_keep_best_n = KeepBestN(n=3) # 집계를 위해 여러 개 유지
-
-    # 5단계: 유지된 상위 N개 후보의 통찰력 집계
-    op5_aggregate = Aggregate()
-
-    # 6단계: 집계된 패치에 점수 매기기 (선택 사항)
-    op6_score_final = Score(combined_scoring=False)
-
-    # 그래프 흐름 정의
     graph = GraphOfOperations()
-    graph.add_operation(op1_generate)
-    graph.add_operation(op2_refine)   # Refining 단계 추가
-    graph.add_operation(op3_score)
-    graph.add_operation(op4_keep_best_n)
-    graph.add_operation(op5_aggregate)
-    graph.add_operation(op6_score_final)
 
-    # 작업 연결
-    op1_generate.add_successor(op2_refine)        # 생성 -> 개선
-    op2_refine.add_successor(op3_score)           # 개선 -> 점수 (유효/개선된 사고만 진행)
-    op3_score.add_successor(op4_keep_best_n)      # 점수 -> 최적 N개 유지
-    op4_keep_best_n.add_successor(op5_aggregate)  # 최적 N개 유지 -> 집계
-    op5_aggregate.add_successor(op6_score_final)  # 집계 -> 최종 점수
+    # --- Level 1: Initial Idea Generation and Selection ---
+    # Generate initial patch ideas (branches from root)
+    op1_generate_initial = Generate(num_branches_prompt=5) # 5개의 초기 아이디어 생성
+    graph.add_operation(op1_generate_initial)
+
+    # Validate and refine these initial ideas (simulated compilation/improvement loop)
+    op2_refine_initial = ValidateAndImproveOperation(patch_prompter, vulnerable_file_name, num_tries=2)
+    graph.add_operation(op2_refine_initial)
+    op1_generate_initial.add_successor(op2_refine_initial)
+
+    # Score the initial (and refined) ideas
+    op3_score_initial = Score(combined_scoring=False)
+    graph.add_operation(op3_score_initial)
+    op2_refine_initial.add_successor(op3_score_initial)
+
+    # Keep the single best initial idea to expand upon (ToT's "best path" selection)
+    op4_keep_best_initial = KeepBestN(n=1) # 단일 최적 아이디어 선택
+    graph.add_operation(op4_keep_best_initial)
+    op3_score_initial.add_successor(op4_keep_best_initial)
+
+    # --- Level 2: Expand/Refine the Best Initial Idea ---
+    # Generate new thoughts based on the best initial idea (deeper branches)
+    # The 'thought_id' will be set by the Controller to the best thought from op4
+    op5_generate_refined = Generate(num_branches_prompt=3) # 최적 아이디어에서 3개의 새로운 아이디어 생성
+    graph.add_operation(op5_generate_refined)
+    # op4_keep_best_initial의 출력이 op5_generate_refined의 입력으로 사용됩니다.
+    # GoT 프레임워크의 Generate operation은 thought_id를 통해 이전 Thought를 참조할 수 있습니다.
+    op4_keep_best_initial.add_successor(op5_generate_refined)
+
+    # Validate and refine these refined ideas
+    op6_refine_refined = ValidateAndImproveOperation(patch_prompter, vulnerable_file_name, num_tries=2)
+    graph.add_operation(op6_refine_refined)
+    op5_generate_refined.add_successor(op6_refine_refined)
+
+    # Score the refined ideas
+    op7_score_refined = Score(combined_scoring=False)
+    graph.add_operation(op7_score_refined)
+    op6_refine_refined.add_successor(op7_score_refined)
+
+    # Keep the single best refined idea (final selection for this path)
+    op8_keep_best_refined = KeepBestN(n=1) # 최종 단일 최적 아이디어 선택
+    graph.add_operation(op8_keep_best_refined)
+    op7_score_refined.add_successor(op8_keep_best_refined)
+
+    # --- Final Output ---
+    # The final best refined thought is the output. No aggregation in typical ToT.
+    # The 'run' function will retrieve the output from op8.
 
     return graph
 
@@ -470,7 +487,7 @@ def run(args):
     }
     
     # --- Backtracking 구현: 최종 점수 기반 재시도 ---
-    max_overall_attempts = 3 # 전체 GoT 프로세스를 재시도할 최대 횟수
+    max_overall_attempts = 3 # 전체 ToT 프로세스를 재시도할 최대 횟수
     min_acceptable_score = 7.0 # 최종 패치의 최소 허용 점수
 
     for overall_attempt in range(max_overall_attempts):
@@ -478,27 +495,29 @@ def run(args):
         
         # 각 재시도마다 새로운 GraphOfOperations 인스턴스를 생성하여 그래프 상태를 초기화
         # (이전 시도의 영향을 받지 않도록)
-        graph = advanced_patch_graph_with_aggregation(patch_prompter, patch_parser, args.vulnerable_file)
+        # ToT 기반 그래프 사용
+        graph = tot_patch_graph(patch_prompter, patch_parser, args.vulnerable_file)
         ctrl = controller.Controller(lm, graph, patch_prompter, patch_parser, initial_state)
 
-        print("Starting Patch Generation with Aggregation and Scoring...")
+        print("Starting Patch Generation with ToT-like approach...")
         start_time = datetime.datetime.now()
         ctrl.run()
         end_time = datetime.datetime.now()
         print(f"Patch generation finished in {end_time - start_time}.")
 
-        # 최종 스코어링 작업(op6_score_final, graph.operations의 인덱스 5)에서 최적의 결과 가져오기
-        final_results = graph.operations[5].get_thoughts()
+        # 최종 스코어링 작업(op8_keep_best_refined, graph.operations의 인덱스 7)에서 최적의 결과 가져오기
+        # ToT는 최종 Aggregation이 없으므로, 마지막 KeepBestN의 결과를 가져옵니다.
+        final_results = graph.operations[7].get_thoughts() # 인덱스 조정 (op8_keep_best_refined)
         
         current_final_score = 0.0
         if final_results:
-            best_thought = final_results[0] # 집계된 사고는 하나만 있어야 함
-            final_code = best_thought.state.get('final_code', 'Final code not found.') # 집계 출력은 'final_code'
+            best_thought = final_results[0] # ToT는 단일 최적 경로의 최종 사고를 선택
+            final_code = best_thought.state.get('patched_code', 'Final code not found.') # ToT는 'patched_code'가 최종 결과
             current_final_score = best_thought.state.get('score', 0.0)
             rationale = best_thought.state.get('rationale', 'N/A')
 
             print("\n" + "="*50)
-            print(f"Overall Attempt {overall_attempt + 1} - Final Aggregated Code (Score: {current_final_score})")
+            print(f"Overall Attempt {overall_attempt + 1} - Final ToT Patch (Score: {current_final_score})")
             print("="*50)
             print(f"Rationale: {rationale}")
             print("-" * 50)
@@ -509,7 +528,7 @@ def run(args):
                 print(f"\nFinal score {current_final_score} meets acceptable threshold ({min_acceptable_score}). Stopping.")
                 # 최종 성공 패치 저장
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                file_path = os.path.join(args.output_dir, f"generated_aggregated_patch_SUCCESS_{timestamp}.java")
+                file_path = os.path.join(args.output_dir, f"generated_tot_patch_SUCCESS_{timestamp}.java")
                 with open(file_path, "w") as f:
                     f.write(f"// Score: {current_final_score}\n// Rationale: {rationale}\n\n{final_code}")
                 print(f"\nFinal successful code saved to {file_path}")
@@ -519,7 +538,7 @@ def run(args):
                 # 필요하다면 다음 시도를 위해 initial_state 또는 그래프 파라미터 수정
                 # 예: op1_generate.num_branches_prompt = 10 # 다음 시도를 위해 브랜치 수 증가
         else:
-            print(f"\nNo code was generated or survived the aggregation/scoring process in overall attempt {overall_attempt + 1}.")
+            print(f"\nNo code was generated or survived the ToT process in overall attempt {overall_attempt + 1}.")
             print("Retrying...")
     
     print(f"\n--- All {max_overall_attempts} overall attempts completed. No satisfactory patch found. ---")
@@ -556,7 +575,7 @@ def main():
         help="Directory to save the generated patch.",
     )
     parser.add_argument(
-        "--use-aggregation",
+        "--use-aggregation", # 이 인수는 ToT에서는 직접 사용되지 않지만, 기존 파서 호환성을 위해 유지
         action="store_true",
         help="Use the advanced graph with an aggregation step."
     )

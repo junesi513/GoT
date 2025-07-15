@@ -10,6 +10,10 @@ import backoff
 import os
 import random
 import time
+import json
+import tempfile
+import logging
+import openai
 from typing import List, Dict, Union
 from openai import OpenAI, OpenAIError
 from openai.types.chat.chat_completion import ChatCompletion
@@ -25,7 +29,11 @@ class ChatGPT(AbstractLanguageModel):
     """
 
     def __init__(
-        self, config_path: str = "", model_name: str = "chatgpt", cache: bool = False
+        self,
+        config_path: str = "",
+        model_name: str = "chatgpt",
+        cache: bool = False,
+        logger: logging.Logger = None,
     ) -> None:
         """
         Initialize the ChatGPT instance with configuration, model details, and caching options.
@@ -37,7 +45,7 @@ class ChatGPT(AbstractLanguageModel):
         :param cache: Flag to determine whether to cache responses. Defaults to False.
         :type cache: bool
         """
-        super().__init__(config_path, model_name, cache)
+        super().__init__(config_path, model_name, cache, logger)
         self.config: Dict = self.config[model_name]
         # The model_id is the id of the model that is used for chatgpt, i.e. gpt-4, gpt-3.5-turbo, etc.
         self.model_id: str = self.config["model_id"]
@@ -49,16 +57,82 @@ class ChatGPT(AbstractLanguageModel):
         # The maximum number of tokens to generate in the chat completion.
         self.max_tokens: int = self.config["max_tokens"]
         # The stop sequence is a sequence of tokens that the model will stop generating at (it will not generate the stop sequence).
-        self.stop: Union[str, List[str]] = self.config["stop"]
+        self.stop: Union[str, List[str], None] = self.config["stop"]
         # The account organization is the organization that is used for chatgpt.
         self.organization: str = self.config["organization"]
-        if self.organization == "":
-            self.logger.warning("OPENAI_ORGANIZATION is not set")
-        self.api_key: str = os.getenv("OPENAI_API_KEY", self.config["api_key"])
-        if self.api_key == "":
-            raise ValueError("OPENAI_API_KEY is not set")
+        self.api_key: str = self.config["api_key"]
+
+        if not self.api_key:
+            self.api_key = os.getenv("OPENAI_API_KEY")
+
+        if not self.api_key:
+            raise ValueError(
+                "OpenAI API key not found. Please set it in the config file or as an environment variable OPENAI_API_KEY."
+            )
+
+        if self.organization:
+            openai.organization = self.organization
+        openai.api_key = self.api_key
+        
         # Initialize the OpenAI Client
-        self.client = OpenAI(api_key=self.api_key, organization=self.organization)
+        self.client = openai.OpenAI(api_key=self.api_key, organization=self.organization)
+
+    def generate(self, prompt: str, num_generations: int) -> List[str]:
+        """
+        Generates `num_generations` responses for the given prompt.
+        """
+        response = self.query(prompt, num_responses=num_generations)
+        return self.get_response_texts(response)
+
+    def generate_text(self, prompt: str, num_branches: int) -> List[str]:
+        """
+        Generates `num_branches` responses for the given prompt.
+        A convenience method that wraps the generate method.
+        """
+        return self.generate(prompt, num_branches)
+
+    @classmethod
+    def from_config(cls, config_path: str, config_key: str = "chatgpt", logger: logging.Logger = None) -> "ChatGPT":
+        """
+        Creates an instance of the ChatGPT language model from a configuration file.
+        """
+        try:
+            with open(config_path, "r") as f:
+                full_config = json.load(f)
+            model_config = full_config[config_key]
+            
+            # This is a bit of a workaround to match the expected __init__ structure
+            # of the original ChatGPT class, which expects a different config format.
+            
+            # Create a temporary config structure that the old __init__ can understand
+            temp_init_config = {
+                config_key: {
+                    "model_id": model_config.get("model_name", "gpt-4-0613"),
+                    "prompt_token_cost": model_config.get("prompt_token_cost", 0.03),
+                    "response_token_cost": model_config.get("response_token_cost", 0.06),
+                    "temperature": model_config.get("temperature", 1.0),
+                    "max_tokens": model_config.get("max_tokens", 4096),
+                    "stop": model_config.get("stop"),
+                    "organization": model_config.get("organization"),
+                    "api_key": model_config.get("api_key")
+                }
+            }
+            
+            # Create a temporary config file to pass to the constructor
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".json") as temp_f:
+                json.dump(temp_init_config, temp_f)
+                temp_path = temp_f.name
+
+            instance = cls(config_path=temp_path, model_name=config_key, logger=logger)
+            
+            # Clean up the temporary file
+            os.remove(temp_path)
+            
+            return instance
+
+        except (FileNotFoundError, KeyError) as e:
+            logging.error(f"Failed to load config for {config_key}: {e}")
+            raise
 
     def query(
         self, query: str, num_responses: int = 1
@@ -75,6 +149,9 @@ class ChatGPT(AbstractLanguageModel):
         """
         if self.cache and query in self.response_cache:
             return self.response_cache[query]
+
+        if self.llm_logger:
+            self.llm_logger.info(f"--- REQUEST ---\n{query}\n")
 
         if num_responses == 1:
             response = self.chat([{"role": "user", "content": query}], num_responses)
@@ -96,6 +173,17 @@ class ChatGPT(AbstractLanguageModel):
                     )
                     time.sleep(random.randint(1, 3))
                     total_num_attempts -= 1
+
+        if self.llm_logger:
+            # Note: This might not be perfect if response is a list of completions
+            if isinstance(response, list):
+                all_choices = []
+                for r in response:
+                    all_choices.extend(r.choices)
+                response_text = "\n".join([choice.message.content for choice in all_choices])
+            else:
+                response_text = "\n".join([choice.message.content for choice in response.choices])
+            self.llm_logger.info(f"--- RESPONSE ---\n{response_text}\n")
 
         if self.cache:
             self.response_cache[query] = response
